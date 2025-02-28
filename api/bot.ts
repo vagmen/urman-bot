@@ -29,19 +29,44 @@ const pinecone = new Pinecone({
 // Функция для генерации ответа с учетом контекста из базы знаний
 async function generateResponse(userMessage: string) {
   try {
-    // Здесь можно добавить вызов поиска в базе знаний через Pinecone
+    // 1. Получаем эмбеддинг вопроса пользователя
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-ada-002",
+      input: userMessage,
+    });
+    const userEmbedding = embeddingResponse.data[0].embedding;
 
+    // 2. Ищем релевантные фрагменты в Pinecone
+    const indexName = "urman-knowledge";
+    const index = pinecone.Index(indexName);
+
+    const queryResponse = await index.query({
+      vector: userEmbedding,
+      topK: 3,
+      includeMetadata: true,
+    });
+
+    // 3. Формируем контекст из найденных фрагментов
+    let contextText = "";
+    queryResponse.matches?.forEach((match, i) => {
+      if (match.metadata?.text) {
+        contextText += `Фрагмент ${i + 1}:\n${match.metadata.text}\n\n`;
+      }
+    });
+
+    // 4. Генерируем ответ с учётом контекста
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4", // Используем более мощную модель вместо gpt-4o-mini
       messages: [
         {
           role: "system",
-          content:
-            "Вы - AI-ассистент компании URMAN. Ваша задача - помогать клиентам, используя информацию из базы знаний компании.",
+          content: `Вы - AI-ассистент компании URMAN. Используйте предоставленные фрагменты базы знаний, чтобы ответить пользователю достоверно.
+Если в предоставленном контексте нет достаточной информации для ответа, честно признайте это. Не выдумывайте информацию.
+Отвечайте профессионально и дружелюбно.`,
         },
         {
           role: "user",
-          content: userMessage,
+          content: `Контекст из базы знаний:\n${contextText}\n\nВопрос пользователя: ${userMessage}`,
         },
       ],
     });
