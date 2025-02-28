@@ -56,7 +56,7 @@ async function generateResponse(userMessage: string) {
 
     // 4. Генерируем ответ с учётом контекста
     const completion = await openai.chat.completions.create({
-      model: "gpt-4", // Используем более мощную модель вместо gpt-4o-mini
+      model: "gpt-4o-mini", // Используем более мощную модель вместо gpt-4o-mini
       messages: [
         {
           role: "system",
