@@ -27,98 +27,163 @@ const pinecone = new Pinecone({
   // environment: PINECONE_ENVIRONMENT,
 });
 
-// Интерфейс для хранения собранной информации
-interface UserInfo {
-  area?: string;
-  region?: string;
-  purpose?: string;
-  stage?: string;
-  // другие поля по необходимости
-}
+// Структура для хранения этапов диалога и собранной информации
+interface DialogState {
+  // Текущий этап диалога
+  currentStage:
+    | "greeting"
+    | "collecting_area"
+    | "collecting_region"
+    | "collecting_purpose"
+    | "collecting_stage"
+    | "collecting_contact"
+    | "completed";
 
-// Расширенный интерфейс для хранения истории диалога
-interface DialogHistory {
+  // Собранная информация
+  collectedInfo: {
+    area?: string;
+    region?: string;
+    purpose?: string;
+    stage?: string;
+    contact?: string;
+    name?: string;
+  };
+
+  // История сообщений
   messages: Array<{
     role: "user" | "assistant";
     content: string;
   }>;
-  collectedInfo: UserInfo;
+
+  // Последний заданный вопрос (для отслеживания контекста)
+  lastQuestion?: string;
 }
 
-// Создаем Map для хранения истории диалогов по userId
-const userDialogs = new Map<number, DialogHistory>();
+// Обновленная Map для хранения состояния диалога
+const userDialogs = new Map<number, DialogState>();
 
-// Функция для проверки наличия информации
-function hasCollectedInfo(
-  dialogHistory: DialogHistory,
-  field: keyof UserInfo
-): boolean {
-  return !!dialogHistory.collectedInfo[field];
+// Функция для обработки ответа пользователя и обновления состояния диалога
+function processUserResponse(message: string, dialogState: DialogState): void {
+  // Сохраняем сообщение пользователя
+  dialogState.messages.push({
+    role: "user",
+    content: message,
+  });
+
+  // Обрабатываем ответ в зависимости от текущего этапа
+  switch (dialogState.currentStage) {
+    case "greeting":
+      // Переходим к сбору информации о площади
+      dialogState.currentStage = "collecting_area";
+      break;
+
+    case "collecting_area":
+      // Сохраняем ответ о площади и переходим к следующему этапу
+      dialogState.collectedInfo.area = message;
+      dialogState.currentStage = "collecting_region";
+      break;
+
+    case "collecting_region":
+      // Сохраняем ответ о регионе и переходим к следующему этапу
+      dialogState.collectedInfo.region = message;
+      dialogState.currentStage = "collecting_purpose";
+      break;
+
+    case "collecting_purpose":
+      // Сохраняем цель использования и переходим к следующему этапу
+      dialogState.collectedInfo.purpose = message;
+      dialogState.currentStage = "collecting_stage";
+      break;
+
+    case "collecting_stage":
+      // Сохраняем этап и переходим к сбору контактов
+      dialogState.collectedInfo.stage = message;
+      dialogState.currentStage = "collecting_contact";
+      break;
+
+    case "collecting_contact":
+      // Сохраняем контактную информацию и завершаем диалог
+      dialogState.collectedInfo.contact = message;
+      dialogState.currentStage = "completed";
+      break;
+
+    case "completed":
+      // Диалог завершен, можно обрабатывать дополнительные вопросы
+      break;
+  }
 }
 
-// Функция для сохранения собранной информации
-function updateCollectedInfo(
-  dialogHistory: DialogHistory,
-  field: keyof UserInfo,
-  value: string
-) {
-  dialogHistory.collectedInfo[field] = value;
+// Функция для генерации следующего вопроса на основе текущего этапа
+function generateNextQuestion(dialogState: DialogState): string {
+  switch (dialogState.currentStage) {
+    case "greeting":
+      return "Здравствуйте! Я AI-ассистент компании URMAN. Чтобы помочь вам с оформлением участка, мне нужно задать несколько вопросов. Какова примерная площадь участка, который вы планируете оформить?";
+
+    case "collecting_area":
+      return "Какова примерная площадь участка, который вы планируете оформить?";
+
+    case "collecting_region":
+      return "В каком регионе расположен этот участок?";
+
+    case "collecting_purpose":
+      return "Какова цель использования участка? Вы планируете построить дачный домик, жилой дом или что-то другое?";
+
+    case "collecting_stage":
+      return "На каком этапе вы находитесь: вы только планируете или уже выбрали конкретный участок для аренды?";
+
+    case "collecting_contact":
+      return "Спасибо за предоставленную информацию! Оставьте, пожалуйста, ваш контактный телефон или email, чтобы наши специалисты могли связаться с вами для дальнейшей консультации.";
+
+    case "completed":
+      return "Спасибо! Вся необходимая информация собрана. Наши специалисты свяжутся с вами в ближайшее время. Если у вас возникнут дополнительные вопросы, не стесняйтесь спрашивать.";
+
+    default:
+      return "Что еще вы хотели бы узнать?";
+  }
 }
 
-// Функция для генерации ответа с учетом контекста из базы знаний
+// Обновленная функция generateResponse
 async function generateResponse(userMessage: string, userId: number) {
   try {
+    // Инициализация или получение состояния диалога
     if (!userDialogs.has(userId)) {
       userDialogs.set(userId, {
+        currentStage: "greeting",
+        collectedInfo: {},
         messages: [],
-        collectedInfo: {}, // Инициализируем пустой объект для хранения информации
       });
     }
-    const dialogHistory = userDialogs.get(userId)!;
 
-    // Анализируем ответ пользователя и обновляем собранную информацию
-    if (userMessage.toLowerCase().includes("га")) {
-      updateCollectedInfo(dialogHistory, "area", userMessage);
-    }
-    if (userMessage.toLowerCase().includes("башкортостан")) {
-      updateCollectedInfo(dialogHistory, "region", userMessage);
-    }
-    // ... другие проверки для обновления информации
+    const dialogState = userDialogs.get(userId)!;
 
-    // Добавляем контекст собранной информации в промпт
-    const contextWithCollectedInfo = `
-      Собранная информация:
-      ${Object.entries(dialogHistory.collectedInfo)
-        .map(([key, value]) => `${key}: ${value}`)
-        .join("\n")}
-      
-      Не спрашивайте повторно информацию, которая уже собрана.
-    `;
+    // Обрабатываем ответ пользователя
+    processUserResponse(userMessage, dialogState);
 
-    // Добавляем сообщение пользователя в историю
-    dialogHistory.messages.push({
-      role: "user",
-      content: userMessage,
-    });
+    // Формируем контекст для модели
+    const contextInfo = `
+Текущий этап диалога: ${dialogState.currentStage}
+Собранная информация:
+${Object.entries(dialogState.collectedInfo)
+  .filter(([_, value]) => value)
+  .map(([key, value]) => `- ${key}: ${value}`)
+  .join("\n")}
+`;
 
-    // 1. Получаем эмбеддинг вопроса пользователя
+    // Получаем релевантные фрагменты из базы знаний
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-ada-002",
       input: userMessage,
     });
     const userEmbedding = embeddingResponse.data[0].embedding;
 
-    // 2. Ищем релевантные фрагменты в Pinecone
     const indexName = "urman-knowledge";
     const index = pinecone.Index(indexName);
-
     const queryResponse = await index.query({
       vector: userEmbedding,
       topK: 3,
       includeMetadata: true,
     });
 
-    // 3. Формируем контекст из найденных фрагментов
     let contextText = "";
     queryResponse.matches?.forEach((match, i) => {
       if (match.metadata?.text) {
@@ -126,7 +191,7 @@ async function generateResponse(userMessage: string, userId: number) {
       }
     });
 
-    // 4. Генерируем ответ с учётом контекста и истории диалога
+    // Генерируем ответ с учетом всего контекста
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -134,28 +199,18 @@ async function generateResponse(userMessage: string, userId: number) {
           role: "system",
           content: `Вы - AI-ассистент компании URMAN, специализирующейся на лесном проектировании и оформлении документов для арендаторов лесных участков.
 
-Ваши основные задачи:
-1. Выявление потребностей клиента через естественный диалог
-2. Сбор необходимой информации для оформления лесного участка
-3. Предоставление релевантной информации об услугах компании
+${contextInfo}
 
-Правила ведения диалога:
-1. Задавайте по одному вопросу за раз
-2. Начинайте с открытых вопросов, постепенно переходя к конкретным деталям
-3. Если клиент интересуется оформлением участка, последовательно соберите информацию:
-   - Площадь участка
-   - Регион расположения
-   - Цель использования
-   - Текущий этап (только планируют или уже выбрали участок)
-   - Наличие документации
-4. Отвечайте профессионально и дружелюбно
-5. Используйте информацию из базы знаний для точных ответов
-6. Если информации недостаточно, честно признайте это
+Ваша задача - вести структурированный диалог с клиентом, собирая необходимую информацию для оформления лесного участка.
 
-Помните: Ваша цель - помочь клиенту и собрать необходимую информацию для дальнейшей работы.`,
+Правила:
+1. Следуйте текущему этапу диалога
+2. Не запрашивайте повторно информацию, которая уже собрана
+3. Отвечайте на вопросы клиента, используя информацию из базы знаний
+4. В конце диалога обязательно получите контактную информацию клиента
+5. Будьте вежливы и профессиональны`,
         },
-        // Добавляем предыдущие сообщения из истории (не более 5 последних)
-        ...dialogHistory.messages.slice(-5),
+        ...dialogState.messages.slice(-5),
         {
           role: "user",
           content: `Контекст из базы знаний:\n${contextText}\n\nВопрос пользователя: ${userMessage}`,
@@ -163,18 +218,32 @@ async function generateResponse(userMessage: string, userId: number) {
       ],
     });
 
-    const response = completion.choices[0].message.content;
+    // Получаем ответ от модели
+    let response = completion.choices[0].message.content;
+
+    // Если модель не сгенерировала следующий вопрос, добавляем его на основе текущего этапа
+    if (dialogState.currentStage !== "completed" && !response?.includes("?")) {
+      response = `${response}\n\n${generateNextQuestion(dialogState)}`;
+    }
 
     if (response) {
-      // Сохраняем ответ ассистента в историю только если он не null
-      dialogHistory.messages.push({
+      // Сохраняем ответ ассистента
+      dialogState.messages.push({
         role: "assistant",
         content: response,
       });
 
-      // Ограничиваем историю последними 10 сообщениями
-      if (dialogHistory.messages.length > 10) {
-        dialogHistory.messages = dialogHistory.messages.slice(-10);
+      // Сохраняем последний заданный вопрос
+      if (response.includes("?")) {
+        const questions = response.match(/[^.!?]+\?/g);
+        if (questions && questions.length > 0) {
+          dialogState.lastQuestion = questions[questions.length - 1].trim();
+        }
+      }
+
+      // Ограничиваем историю
+      if (dialogState.messages.length > 10) {
+        dialogState.messages = dialogState.messages.slice(-10);
       }
     }
 
