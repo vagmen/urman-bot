@@ -75,12 +75,15 @@ function processUserResponse(message: string, dialogState: DialogState): void {
   // Обрабатываем ответ в зависимости от текущего этапа
   switch (dialogState.currentStage) {
     case "greeting":
-      // Сохраняем имя пользователя (если оно есть в сообщении)
-      const possibleName = message.split(" ")[0];
-      if (possibleName && /^[A-ZА-Я]/.test(possibleName)) {
-        dialogState.collectedInfo.name = possibleName;
+      // Улучшенное определение имени - ищем слова, начинающиеся с заглавной буквы
+      const words = message.split(/\s+/);
+      const possibleNames = words.filter((word) =>
+        /^[A-ZА-Я][a-zа-я]+$/.test(word)
+      );
+      if (possibleNames.length > 0) {
+        // Берем первые два слова, если они оба с заглавной буквы (для имени и фамилии)
+        dialogState.collectedInfo.name = possibleNames.slice(0, 2).join(" ");
       }
-      // Переходим к сбору информации о площади
       dialogState.currentStage = "collecting_area";
       break;
 
@@ -109,8 +112,20 @@ function processUserResponse(message: string, dialogState: DialogState): void {
       break;
 
     case "collecting_contact":
-      // Сохраняем контактную информацию и завершаем диалог
+      // Сохраняем контактную информацию
       dialogState.collectedInfo.contact = message;
+
+      // Дополнительная проверка на имя в сообщении с контактами
+      const contactWords = message.split(/\s+/);
+      const nameInContact = contactWords
+        .filter((word) => /^[A-ZА-Я][a-zа-я]+$/.test(word))
+        .slice(0, 2)
+        .join(" ");
+
+      if (nameInContact && !dialogState.collectedInfo.name) {
+        dialogState.collectedInfo.name = nameInContact;
+      }
+
       dialogState.currentStage = "completed";
       break;
 
