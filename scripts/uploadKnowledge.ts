@@ -16,7 +16,7 @@ const pinecone = new Pinecone({
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // Функция для разбиения текста на чанки
-function chunkText(text: string, maxChunkLength: number = 500): string[] {
+function chunkText(text: string, maxChunkLength: number = 2500): string[] {
   const chunks: string[] = [];
   const paragraphs = text.split("\n\n");
 
