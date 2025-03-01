@@ -3,6 +3,7 @@ import { Telegraf } from "telegraf";
 import { OpenAI } from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import dotenv from "dotenv";
+import { Message } from "telegraf/types";
 
 // Загружаем переменные окружения (на локальной машине)
 dotenv.config();
@@ -26,9 +27,32 @@ const pinecone = new Pinecone({
   // environment: PINECONE_ENVIRONMENT,
 });
 
+// Добавляем интерфейс для хранения истории диалога
+interface DialogHistory {
+  messages: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+}
+
+// Создаем Map для хранения истории диалогов по userId
+const userDialogs = new Map<number, DialogHistory>();
+
 // Функция для генерации ответа с учетом контекста из базы знаний
-async function generateResponse(userMessage: string) {
+async function generateResponse(userMessage: string, userId: number) {
   try {
+    // Получаем или создаем историю диалога для пользователя
+    if (!userDialogs.has(userId)) {
+      userDialogs.set(userId, { messages: [] });
+    }
+    const dialogHistory = userDialogs.get(userId)!;
+
+    // Добавляем сообщение пользователя в историю
+    dialogHistory.messages.push({
+      role: "user",
+      content: userMessage,
+    });
+
     // 1. Получаем эмбеддинг вопроса пользователя
     const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-ada-002",
@@ -54,9 +78,9 @@ async function generateResponse(userMessage: string) {
       }
     });
 
-    // 4. Генерируем ответ с учётом контекста
+    // 4. Генерируем ответ с учётом контекста и истории диалога
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Используем более мощную модель вместо gpt-4o-mini
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -82,6 +106,8 @@ async function generateResponse(userMessage: string) {
 
 Помните: Ваша цель - помочь клиенту и собрать необходимую информацию для дальнейшей работы.`,
         },
+        // Добавляем предыдущие сообщения из истории (не более 5 последних)
+        ...dialogHistory.messages.slice(-5),
         {
           role: "user",
           content: `Контекст из базы знаний:\n${contextText}\n\nВопрос пользователя: ${userMessage}`,
@@ -89,7 +115,22 @@ async function generateResponse(userMessage: string) {
       ],
     });
 
-    return completion.choices[0].message.content;
+    const response = completion.choices[0].message.content;
+
+    if (response) {
+      // Сохраняем ответ ассистента в историю только если он не null
+      dialogHistory.messages.push({
+        role: "assistant",
+        content: response,
+      });
+
+      // Ограничиваем историю последними 10 сообщениями
+      if (dialogHistory.messages.length > 10) {
+        dialogHistory.messages = dialogHistory.messages.slice(-10);
+      }
+    }
+
+    return response;
   } catch (error) {
     console.error("Ошибка при генерации ответа:", error);
     return "Извините, произошла ошибка при обработке вашего запроса. Попробуйте позже.";
@@ -106,7 +147,8 @@ bot.start((ctx) => {
 bot.on("message", async (ctx) => {
   if ("text" in ctx.message) {
     const userMessage = ctx.message.text;
-    const response = await generateResponse(userMessage);
+    const userId = ctx.message.from.id;
+    const response = await generateResponse(userMessage, userId);
     if (response) {
       await ctx.reply(response);
     }
