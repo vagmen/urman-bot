@@ -5,6 +5,7 @@ import { Pinecone } from "@pinecone-database/pinecone";
 import dotenv from "dotenv";
 import { Message } from "telegraf/types";
 import { handlePlanfixTaskCreation } from "../services/planfix";
+import axios, { AxiosError } from "axios";
 
 // Загружаем переменные окружения (на локальной машине)
 dotenv.config();
@@ -264,6 +265,30 @@ ${dialogState.messages
           console.log("Planfix task created successfully");
         } catch (error) {
           console.error("Error creating Planfix task:", error);
+          // Добавляем детальное логирование ошибок
+          if (
+            error &&
+            typeof error === "object" &&
+            "response" in error &&
+            error.response
+          ) {
+            const axiosError = error as AxiosError;
+            // Запрос был сделан, и сервер ответил статусом вне диапазона 2xx
+            console.error("Ошибка API Planfix:", {
+              статус: axiosError.response!.status,
+              данные: axiosError.response!.data,
+              заголовки: axiosError.response!.headers,
+            });
+          } else if (error && typeof error === "object" && "request" in error) {
+            // Запрос был сделан, но ответ не получен
+            console.error("Нет ответа от Planfix:", error.request);
+          } else if (error instanceof Error) {
+            // Что-то пошло не так при настройке запроса
+            console.error(
+              "Ошибка при настройке запроса к Planfix:",
+              error.message
+            );
+          }
         }
       }
 
