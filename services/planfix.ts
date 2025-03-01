@@ -98,24 +98,24 @@ export const handlePlanfixTaskCreation = async ({
   const taskData = {
     name,
     description,
-    template: {
-      id: 199214, // Шаблон "Карточка удаленщика"
-    },
-    status: {
-      id: 220, // Статус "Переговоры"
-    },
+    // template: {
+    //   id: 199214, // Шаблон "Карточка удаленщика"
+    // },
+    // status: {
+    //   id: 220, // Статус "Переговоры"
+    // },
     counterparty: {
       id: `contact:${contactId}`,
     },
-    assignees: {
-      users: [
-        {
-          id: "user:14",
-          name: "Виктор Тарусов",
-        },
-      ],
-      groups: [],
-    },
+    // assignees: {
+    //   users: [
+    //     {
+    //       id: "user:14",
+    //       name: "Виктор Тарусов",
+    //     },
+    //   ],
+    //   groups: [],
+    // },
     ...(attachment && {
       files: [{ id: await uploadFileToPlanfix(attachment, token) }],
     }),
