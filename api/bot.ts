@@ -163,8 +163,11 @@ async function generateResponse(userMessage: string, userId: number) {
 
     const dialogState = userDialogs.get(userId)!;
 
-    // Проверяем, был ли предыдущий этап "collecting_contact" и текущее сообщение содержит телефон
-    const isPhoneNumber = /\d{10,11}/.test(userMessage);
+    // This would be a better phone number regex for Russian numbers
+    const isPhoneNumber =
+      /^(\+7|7|8)?[\s\-]?\(?[9][0-9]{2}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/.test(
+        userMessage
+      );
     if (dialogState.currentStage === "collecting_contact" && isPhoneNumber) {
       // Сохраняем контактную информацию и переходим к завершению
       dialogState.collectedInfo.contact = userMessage;
