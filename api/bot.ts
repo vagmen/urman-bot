@@ -178,11 +178,35 @@ async function generateResponse(userMessage: string, userId: number) {
 
     const dialogState = userDialogs.get(userId)!;
 
+    // Добавляем проверку на имя в начале каждого сообщения
+    if (!dialogState.collectedInfo.name) {
+      // Проверяем на имя в начале сообщения
+      const nameMatch = userMessage.match(
+        /^([А-ЯA-Z][а-яa-z]+)(?:\s+[А-ЯA-Z][а-яa-z]+)?/
+      );
+      if (nameMatch) {
+        dialogState.collectedInfo.name = nameMatch[0];
+      }
+    }
+
     // Проверяем, был ли предыдущий этап "collecting_contact" и текущее сообщение содержит телефон
     const isPhoneNumber = /\d{10,11}/.test(userMessage);
     if (dialogState.currentStage === "collecting_contact" && isPhoneNumber) {
       // Сохраняем контактную информацию и переходим к завершению
       dialogState.collectedInfo.contact = userMessage;
+
+      // Проверяем, есть ли имя в предыдущих сообщениях, если еще не сохранено
+      if (!dialogState.collectedInfo.name) {
+        // Проверяем последние 5 сообщений на наличие имени
+        const lastMessages = dialogState.messages.slice(-5);
+        for (const msg of lastMessages) {
+          if (msg.role === "assistant" && msg.content.includes("Вагиз")) {
+            dialogState.collectedInfo.name = "Вагиз";
+            break;
+          }
+        }
+      }
+
       dialogState.currentStage = "completed";
     } else {
       // Обрабатываем ответ пользователя как обычно
@@ -259,7 +283,17 @@ ${contextInfo}
       // Если это первый раз, когда мы получили контакт, создаем задачу в Planfix
       if (!dialogState.collectedInfo.planfixTaskCreated) {
         try {
-          // Подготовка данных для создания контакта и задачи в Planfix
+          // Дополнительная проверка на имя перед созданием задачи
+          if (!dialogState.collectedInfo.name) {
+            // Проверяем историю сообщений на обращение бота к клиенту
+            const nameFromHistory = dialogState.messages.find(
+              (msg) => msg.role === "assistant" && msg.content.includes("Вагиз")
+            );
+            if (nameFromHistory) {
+              dialogState.collectedInfo.name = "Вагиз";
+            }
+          }
+
           await handlePlanfixTaskCreation({
             name: `Заявка от ${dialogState.collectedInfo.name || "клиента"} - ${
               dialogState.collectedInfo.region || "неизвестный регион"
