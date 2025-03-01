@@ -16,18 +16,40 @@ const pinecone = new Pinecone({
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // Функция для разбиения текста на чанки
-function chunkText(text: string, maxChunkLength: number = 1000): string[] {
+function chunkText(text: string, maxChunkLength: number = 500): string[] {
   const chunks: string[] = [];
   const paragraphs = text.split("\n\n");
 
   let currentChunk = "";
 
   for (const paragraph of paragraphs) {
-    if (currentChunk.length + paragraph.length < maxChunkLength) {
-      currentChunk += (currentChunk ? "\n\n" : "") + paragraph;
-    } else {
-      if (currentChunk) chunks.push(currentChunk);
+    // Если параграф сам по себе больше максимального размера
+    if (paragraph.length > maxChunkLength) {
+      // Если есть накопленный чанк, сохраняем его
+      if (currentChunk) {
+        chunks.push(currentChunk);
+        currentChunk = "";
+      }
+
+      // Разбиваем большой параграф на предложения
+      const sentences = paragraph.split(/(?<=[.!?])\s+/);
+      let sentenceChunk = "";
+
+      for (const sentence of sentences) {
+        if ((sentenceChunk + sentence).length <= maxChunkLength) {
+          sentenceChunk += (sentenceChunk ? " " : "") + sentence;
+        } else {
+          if (sentenceChunk) chunks.push(sentenceChunk);
+          sentenceChunk = sentence;
+        }
+      }
+
+      if (sentenceChunk) chunks.push(sentenceChunk);
+    } else if (currentChunk.length + paragraph.length > maxChunkLength) {
+      chunks.push(currentChunk);
       currentChunk = paragraph;
+    } else {
+      currentChunk += (currentChunk ? "\n\n" : "") + paragraph;
     }
   }
 
