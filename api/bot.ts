@@ -27,25 +27,73 @@ const pinecone = new Pinecone({
   // environment: PINECONE_ENVIRONMENT,
 });
 
-// Добавляем интерфейс для хранения истории диалога
+// Интерфейс для хранения собранной информации
+interface UserInfo {
+  area?: string;
+  region?: string;
+  purpose?: string;
+  stage?: string;
+  // другие поля по необходимости
+}
+
+// Расширенный интерфейс для хранения истории диалога
 interface DialogHistory {
   messages: Array<{
     role: "user" | "assistant";
     content: string;
   }>;
+  collectedInfo: UserInfo;
 }
 
 // Создаем Map для хранения истории диалогов по userId
 const userDialogs = new Map<number, DialogHistory>();
 
+// Функция для проверки наличия информации
+function hasCollectedInfo(
+  dialogHistory: DialogHistory,
+  field: keyof UserInfo
+): boolean {
+  return !!dialogHistory.collectedInfo[field];
+}
+
+// Функция для сохранения собранной информации
+function updateCollectedInfo(
+  dialogHistory: DialogHistory,
+  field: keyof UserInfo,
+  value: string
+) {
+  dialogHistory.collectedInfo[field] = value;
+}
+
 // Функция для генерации ответа с учетом контекста из базы знаний
 async function generateResponse(userMessage: string, userId: number) {
   try {
-    // Получаем или создаем историю диалога для пользователя
     if (!userDialogs.has(userId)) {
-      userDialogs.set(userId, { messages: [] });
+      userDialogs.set(userId, {
+        messages: [],
+        collectedInfo: {}, // Инициализируем пустой объект для хранения информации
+      });
     }
     const dialogHistory = userDialogs.get(userId)!;
+
+    // Анализируем ответ пользователя и обновляем собранную информацию
+    if (userMessage.toLowerCase().includes("га")) {
+      updateCollectedInfo(dialogHistory, "area", userMessage);
+    }
+    if (userMessage.toLowerCase().includes("башкортостан")) {
+      updateCollectedInfo(dialogHistory, "region", userMessage);
+    }
+    // ... другие проверки для обновления информации
+
+    // Добавляем контекст собранной информации в промпт
+    const contextWithCollectedInfo = `
+      Собранная информация:
+      ${Object.entries(dialogHistory.collectedInfo)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join("\n")}
+      
+      Не спрашивайте повторно информацию, которая уже собрана.
+    `;
 
     // Добавляем сообщение пользователя в историю
     dialogHistory.messages.push({
