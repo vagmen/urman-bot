@@ -5,7 +5,6 @@ import { Pinecone } from "@pinecone-database/pinecone";
 import dotenv from "dotenv";
 import { Message } from "telegraf/types";
 import { handlePlanfixTaskCreation } from "../services/planfix";
-import axios, { AxiosError } from "axios";
 
 // Загружаем переменные окружения (на локальной машине)
 dotenv.config();
@@ -65,14 +64,6 @@ interface DialogState {
 // Обновленная Map для хранения состояния диалога
 const userDialogs = new Map<number, DialogState>();
 
-// Обновленная функция определения телефона - более гибкая
-const isPhoneNumber = (phone: string) => {
-  // Удаляем все нецифровые символы
-  const cleaned = phone.replace(/\D/g, "");
-  // Проверяем что это валидный российский номер (10-11 цифр)
-  return /^(?:7|8)?9\d{9}$/.test(cleaned);
-};
-
 // Функция для обработки ответа пользователя и обновления состояния диалога
 function processUserResponse(message: string, dialogState: DialogState): void {
   // Сохраняем сообщение пользователя
@@ -129,6 +120,35 @@ function processUserResponse(message: string, dialogState: DialogState): void {
   }
 }
 
+// Функция для генерации следующего вопроса на основе текущего этапа
+function generateNextQuestion(dialogState: DialogState): string {
+  switch (dialogState.currentStage) {
+    case "greeting":
+      return "Здравствуйте! Я AI-ассистент компании URMAN. Чтобы помочь вам с оформлением участка, мне нужно задать несколько вопросов. Какова примерная площадь участка, который вы планируете оформить?";
+
+    case "collecting_area":
+      return "Какова примерная площадь участка, который вы планируете оформить?";
+
+    case "collecting_region":
+      return "В каком регионе расположен этот участок?";
+
+    case "collecting_purpose":
+      return "Какова цель использования участка? Вы планируете построить дачный домик, жилой дом или что-то другое?";
+
+    case "collecting_stage":
+      return "На каком этапе вы находитесь: вы только планируете или уже выбрали конкретный участок для аренды?";
+
+    case "collecting_contact":
+      return "Спасибо за предоставленную информацию! Оставьте, пожалуйста, ваш контактный телефон или email, чтобы наши специалисты могли связаться с вами для дальнейшей консультации.";
+
+    case "completed":
+      return "Спасибо! Вся необходимая информация собрана. Наши специалисты свяжутся с вами в ближайшее время. Если у вас возникнут дополнительные вопросы, не стесняйтесь спрашивать.";
+
+    default:
+      return "Что еще вы хотели бы узнать?";
+  }
+}
+
 // Обновленная функция generateResponse
 async function generateResponse(userMessage: string, userId: number) {
   try {
@@ -143,17 +163,12 @@ async function generateResponse(userMessage: string, userId: number) {
 
     const dialogState = userDialogs.get(userId)!;
 
-    // Проверяем телефон с более гибкой валидацией
-    if (dialogState.currentStage === "collecting_contact") {
-      const cleanedPhone = userMessage.replace(/\D/g, "");
-      if (isPhoneNumber(cleanedPhone)) {
-        // Сохраняем номер в стандартном формате
-        dialogState.collectedInfo.contact = cleanedPhone.replace(
-          /^(?:7|8)?(\d{3})(\d{3})(\d{2})(\d{2})$/,
-          "+7$1$2$3$4"
-        );
-        dialogState.currentStage = "completed";
-      }
+    // Проверяем, был ли предыдущий этап "collecting_contact" и текущее сообщение содержит телефон
+    const isPhoneNumber = /\d{10,11}/.test(userMessage);
+    if (dialogState.currentStage === "collecting_contact" && isPhoneNumber) {
+      // Сохраняем контактную информацию и переходим к завершению
+      dialogState.collectedInfo.contact = userMessage;
+      dialogState.currentStage = "completed";
     } else {
       // Обрабатываем ответ пользователя как обычно
       processUserResponse(userMessage, dialogState);
@@ -265,41 +280,18 @@ ${dialogState.messages
           console.log("Planfix task created successfully");
         } catch (error) {
           console.error("Error creating Planfix task:", error);
-          // Добавляем детальное логирование ошибок
-          if (
-            error &&
-            typeof error === "object" &&
-            "response" in error &&
-            error.response
-          ) {
-            const axiosError = error as AxiosError;
-            // Запрос был сделан, и сервер ответил статусом вне диапазона 2xx
-            console.error("Ошибка API Planfix:", {
-              статус: axiosError.response!.status,
-              данные: axiosError.response!.data,
-              заголовки: axiosError.response!.headers,
-            });
-          } else if (error && typeof error === "object" && "request" in error) {
-            // Запрос был сделан, но ответ не получен
-            console.error("Нет ответа от Planfix:", error.request);
-          } else if (error instanceof Error) {
-            // Что-то пошло не так при настройке запроса
-            console.error(
-              "Ошибка при настройке запроса к Planfix:",
-              error.message
-            );
-          }
         }
       }
 
       // Если ответ от модели все еще запрашивает контакты, заменим его на подтверждение
       if (
         response?.toLowerCase().includes("контактный телефон") ||
+        response?.toLowerCase().includes("email") ||
         response?.toLowerCase().includes("связаться с вами")
       ) {
         response = `Спасибо за предоставленный номер телефона. Я записал ваш контактный номер: ${dialogState.collectedInfo.contact}.
 
-Если у вас есть какие-либо вопросы о наших услугах или нам нужно будет уточнить детали, мы свяжемся с вами. Кроме того, вы можете связаться с нами по телефону +7 (963) 136-34-86, если у вас возникнут дополнительные вопросы.
+Если у вас есть какие-либо вопросы о наших услугах или нам нужно будет уточнить детали, мы свяжемся с вами. Кроме того, вы можете связаться с нами по телефону +7 (963) 136-34-86 или через электронную почту project@urman.su, если у вас возникнут дополнительные вопросы.
 
 Пожалуйста, сообщите, если есть что-то еще, с чем я могу помочь вам на данном этапе!`;
       }
@@ -367,32 +359,3 @@ export default async (req: VercelRequest, res: VercelResponse) => {
     res.status(500).end();
   }
 };
-
-// Обновляем функцию generateNextQuestion, убирая упоминание email
-function generateNextQuestion(dialogState: DialogState): string {
-  switch (dialogState.currentStage) {
-    case "greeting":
-      return "Здравствуйте! Я AI-ассистент компании URMAN. Чтобы помочь вам с оформлением участка, мне нужно задать несколько вопросов. Какова примерная площадь участка, который вы планируете оформить?";
-
-    case "collecting_area":
-      return "Какова примерная площадь участка, который вы планируете оформить?";
-
-    case "collecting_region":
-      return "В каком регионе расположен этот участок?";
-
-    case "collecting_purpose":
-      return "Какова цель использования участка? Вы планируете построить дачный домик, жилой дом или что-то другое?";
-
-    case "collecting_stage":
-      return "На каком этапе вы находитесь: вы только планируете или уже выбрали конкретный участок для аренды?";
-
-    case "collecting_contact":
-      return "Спасибо за предоставленную информацию! Оставьте, пожалуйста, ваш контактный телефон, чтобы наши специалисты могли связаться с вами для дальнейшей консультации.";
-
-    case "completed":
-      return "Спасибо! Вся необходимая информация собрана. Наши специалисты свяжутся с вами в ближайшее время. Если у вас возникнут дополнительные вопросы, не стесняйтесь спрашивать.";
-
-    default:
-      return "Что еще вы хотели бы узнать?";
-  }
-}
