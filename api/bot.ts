@@ -4,6 +4,7 @@ import { OpenAI } from "openai";
 import { Pinecone } from "@pinecone-database/pinecone";
 import dotenv from "dotenv";
 import { Message } from "telegraf/types";
+import { handlePlanfixTaskCreation } from "../services/planfix";
 
 // Загружаем переменные окружения (на локальной машине)
 dotenv.config();
@@ -12,9 +13,9 @@ dotenv.config();
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const PINECONE_API_KEY = process.env.PINECONE_API_KEY;
-// const PINECONE_ENVIRONMENT = process.env.PINECONE_ENVIRONMENT;
+const PLANFIX_TOKEN = process.env.PLANFIX_TOKEN;
 
-if (!BOT_TOKEN || !OPENAI_API_KEY || !PINECONE_API_KEY) {
+if (!BOT_TOKEN || !OPENAI_API_KEY || !PINECONE_API_KEY || !PLANFIX_TOKEN) {
   throw new Error("Отсутствуют необходимые переменные окружения");
 }
 
@@ -47,6 +48,7 @@ interface DialogState {
     stage?: string;
     contact?: string;
     name?: string;
+    planfixTaskCreated?: boolean;
   };
 
   // История сообщений
@@ -73,6 +75,11 @@ function processUserResponse(message: string, dialogState: DialogState): void {
   // Обрабатываем ответ в зависимости от текущего этапа
   switch (dialogState.currentStage) {
     case "greeting":
+      // Сохраняем имя пользователя (если оно есть в сообщении)
+      const possibleName = message.split(" ")[0];
+      if (possibleName && /^[A-ZА-Я]/.test(possibleName)) {
+        dialogState.collectedInfo.name = possibleName;
+      }
       // Переходим к сбору информации о площади
       dialogState.currentStage = "collecting_area";
       break;
@@ -156,8 +163,16 @@ async function generateResponse(userMessage: string, userId: number) {
 
     const dialogState = userDialogs.get(userId)!;
 
-    // Обрабатываем ответ пользователя
-    processUserResponse(userMessage, dialogState);
+    // Проверяем, был ли предыдущий этап "collecting_contact" и текущее сообщение содержит телефон
+    const isPhoneNumber = /\d{10,11}/.test(userMessage);
+    if (dialogState.currentStage === "collecting_contact" && isPhoneNumber) {
+      // Сохраняем контактную информацию и переходим к завершению
+      dialogState.collectedInfo.contact = userMessage;
+      dialogState.currentStage = "completed";
+    } else {
+      // Обрабатываем ответ пользователя как обычно
+      processUserResponse(userMessage, dialogState);
+    }
 
     // Формируем контекст для модели
     const contextInfo = `
@@ -220,6 +235,67 @@ ${contextInfo}
 
     // Получаем ответ от модели
     let response = completion.choices[0].message.content;
+
+    // Если этап "completed", убедимся, что ответ содержит подтверждение получения контактной информации
+    if (
+      dialogState.currentStage === "completed" &&
+      dialogState.collectedInfo.contact
+    ) {
+      // Если это первый раз, когда мы получили контакт, создаем задачу в Planfix
+      if (!dialogState.collectedInfo.planfixTaskCreated) {
+        try {
+          // Подготовка данных для создания контакта и задачи в Planfix
+          await handlePlanfixTaskCreation({
+            name: `Заявка от ${dialogState.collectedInfo.name || "клиента"} - ${
+              dialogState.collectedInfo.region || "неизвестный регион"
+            }`,
+            description: `
+Площадь участка: ${dialogState.collectedInfo.area || "не указана"}
+Регион: ${dialogState.collectedInfo.region || "не указан"}
+Цель использования: ${dialogState.collectedInfo.purpose || "не указана"}
+Этап: ${dialogState.collectedInfo.stage || "не указан"}
+История диалога:
+${dialogState.messages
+  .map((msg) => `${msg.role === "user" ? "Клиент" : "Бот"}: ${msg.content}`)
+  .join("\n")}
+            `,
+            contactData: {
+              name: dialogState.collectedInfo.name || "Клиент из Telegram",
+              position: "Потенциальный клиент",
+              projects: [],
+              software: [],
+              otherSkills: `Информация из Telegram бота: 
+Площадь участка: ${dialogState.collectedInfo.area || "не указана"}
+Регион: ${dialogState.collectedInfo.region || "не указан"}
+Цель использования: ${dialogState.collectedInfo.purpose || "не указана"}
+Этап: ${dialogState.collectedInfo.stage || "не указан"}`,
+              phone: dialogState.collectedInfo.contact,
+            },
+            isRemote: true,
+          });
+
+          // Отмечаем, что задача создана
+          dialogState.collectedInfo.planfixTaskCreated = true;
+
+          console.log("Planfix task created successfully");
+        } catch (error) {
+          console.error("Error creating Planfix task:", error);
+        }
+      }
+
+      // Если ответ от модели все еще запрашивает контакты, заменим его на подтверждение
+      if (
+        response?.toLowerCase().includes("контактный телефон") ||
+        response?.toLowerCase().includes("email") ||
+        response?.toLowerCase().includes("связаться с вами")
+      ) {
+        response = `Спасибо за предоставленный номер телефона. Я записал ваш контактный номер: ${dialogState.collectedInfo.contact}.
+
+Если у вас есть какие-либо вопросы о наших услугах или нам нужно будет уточнить детали, мы свяжемся с вами. Кроме того, вы можете связаться с нами по телефону +7 (963) 136-34-86 или через электронную почту project@urman.su, если у вас возникнут дополнительные вопросы.
+
+Пожалуйста, сообщите, если есть что-то еще, с чем я могу помочь вам на данном этапе!`;
+      }
+    }
 
     // Если модель не сгенерировала следующий вопрос, добавляем его на основе текущего этапа
     if (dialogState.currentStage !== "completed" && !response?.includes("?")) {
