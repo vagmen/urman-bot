@@ -11,3 +11,8 @@ PINECONE_API_KEY=YOUR_PINECONE_API_KEY
 ```
 
 4. Запустите команду `npm install` в корне репозитория для установки зависимостей.
+5. Для загрузки базы знаний выполните команду:
+
+```bash
+npx ts-node scripts/uploadKnowledge.ts
+```
