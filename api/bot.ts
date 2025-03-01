@@ -112,21 +112,15 @@ function processUserResponse(message: string, dialogState: DialogState): void {
       break;
 
     case "collecting_contact":
-      // Сохраняем контактную информацию
-      dialogState.collectedInfo.contact = message;
-
-      // Дополнительная проверка на имя в сообщении с контактами
-      const contactWords = message.split(/\s+/);
-      const nameInContact = contactWords
-        .filter((word) => /^[A-ZА-Я][a-zа-я]+$/.test(word))
-        .slice(0, 2)
-        .join(" ");
-
-      if (nameInContact && !dialogState.collectedInfo.name) {
-        dialogState.collectedInfo.name = nameInContact;
+      // Check if the message contains a phone number
+      const isPhoneNumber = /\d{10,11}/.test(message);
+      if (isPhoneNumber) {
+        dialogState.collectedInfo.contact = message;
+        dialogState.currentStage = "completed";
+      } else {
+        // If it's not a phone number, keep collecting contact info
+        dialogState.collectedInfo.contact = message;
       }
-
-      dialogState.currentStage = "completed";
       break;
 
     case "completed":
@@ -154,7 +148,7 @@ function generateNextQuestion(dialogState: DialogState): string {
       return "На каком этапе вы находитесь: вы только планируете или уже выбрали конкретный участок для аренды?";
 
     case "collecting_contact":
-      return "Спасибо за предоставленную информацию! Оставьте, пожалуйста, ваш контактный телефон или email, чтобы наши специалисты могли связаться с вами для дальнейшей консультации.";
+      return "Спасибо за предоставленную информацию! Оставьте, пожалуйста, ваш контактный телефон для связи.";
 
     case "completed":
       return "Спасибо! Вся необходимая информация собрана. Наши специалисты свяжутся с вами в ближайшее время. Если у вас возникнут дополнительные вопросы, не стесняйтесь спрашивать.";
@@ -192,21 +186,7 @@ async function generateResponse(userMessage: string, userId: number) {
     // Проверяем, был ли предыдущий этап "collecting_contact" и текущее сообщение содержит телефон
     const isPhoneNumber = /\d{10,11}/.test(userMessage);
     if (dialogState.currentStage === "collecting_contact" && isPhoneNumber) {
-      // Сохраняем контактную информацию и переходим к завершению
       dialogState.collectedInfo.contact = userMessage;
-
-      // Проверяем, есть ли имя в предыдущих сообщениях, если еще не сохранено
-      if (!dialogState.collectedInfo.name) {
-        // Проверяем последние 5 сообщений на наличие имени
-        const lastMessages = dialogState.messages.slice(-5);
-        for (const msg of lastMessages) {
-          if (msg.role === "assistant" && msg.content.includes("Вагиз")) {
-            dialogState.collectedInfo.name = "Вагиз";
-            break;
-          }
-        }
-      }
-
       dialogState.currentStage = "completed";
     } else {
       // Обрабатываем ответ пользователя как обычно
